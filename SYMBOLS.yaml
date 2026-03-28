@@ -1,0 +1,15 @@
+BTC-CAD:
+  book_value: 129328.97
+  shares: 0.011184
+
+NFLX:
+  book_value: 104.76
+  shares: 40.0
+
+AAPL:
+  book_value: 233.79
+  shares: 5.0013
+
+MSFT:
+  book_value: 543.0
+  shares: 5.0
