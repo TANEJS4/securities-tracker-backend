@@ -63,7 +63,7 @@ def get_positions() -> List[Dict]:
         if current_price == "N/A" or not isinstance(current_price, (int, float)):
             current_price = 0.0
 
-        pl = (current_price - book_price) * shares
+        pl = round((current_price - book_price) * shares, 2)
         performance = (
             ((current_price - book_price) / book_price) * 100 if book_price else 0.0
         )
@@ -71,11 +71,11 @@ def get_positions() -> List[Dict]:
         positions.append(
             {
                 "symbol": sym,  # to_frontend_symbol(sym),
-                "currentPrice": current_price,
+                "currentPrice": round(current_price, 2),
                 "bookPrice": book_price,
                 "shares": shares,
                 "pl": pl,
-                "performance": performance,
+                # "performance": performance,
             }
         )
     return positions
@@ -101,7 +101,7 @@ def get_portfolio() -> Dict:
         "totalValue": total_value,
         "dailyChange": daily_change,
         "dailyChangePercent": daily_change_percent,
-        "goalPercentage": 65.0,
+        # "goalPercentage": 65.0,
     }
 
 
