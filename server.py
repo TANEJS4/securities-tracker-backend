@@ -1,36 +1,42 @@
 import asyncio
 import json
+import logging
+import os
 import time
+from collections import defaultdict
+from contextlib import asynccontextmanager
+
+import yfinance as yf
+import yaml
+from yaml.representer import Representer, SafeRepresenter
+from dotenv import load_dotenv
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
-from typing import List, Dict
-import yfinance as yf
-from contextlib import asynccontextmanager
-import logging
+from typing import Dict, List
 
-from main import DataService, SYMBOLS, format_ohlcv
+from helper import to_backend_symbol, to_frontend_symbol
+from main import SYMBOLS, DataService, format_ohlcv
+from wealthsimple_integration import WealthSimpleManager, get_wealthsimple_portfolio
+
+yaml.add_representer(defaultdict, Representer.represent_dict)
+yaml.representer.SafeRepresenter.add_representer(
+    defaultdict, SafeRepresenter.represent_dict
+)
 
 logging.basicConfig(
-    level=logging.DEBUG, format="%(asctime)s [%(levelname)s] %(message)s"
+    level=logging.DEBUG, format="%(asctime)s  [%(levelname)s] %(message)s"
 )
 log = logging.getLogger(__name__)
 
-
-def to_frontend_symbol(sym: str) -> str:
-    if sym == "BTC-USD":
-        return "BTC/USDT"
-    if sym == "ETH-USD":
-        return "ETH/USDT"
-    return sym
+load_dotenv()
 
 
-def to_backend_symbol(sym: str) -> str:
-    if sym == "BTC/USDT":
-        return "BTC-USD"
-    if sym == "ETH/USDT":
-        return "ETH-USD"
-    return sym
-
+"""
+from forex_python.converter import CurrencyRates
+c = CurrencyRates()
+rate = c.get_rate('USD', 'INR')
+print(c.convert('USD', 'INR', 100)) # 100 USD to INR
+"""
 
 PREVIOUS_CLOSES = {}
 
@@ -87,7 +93,7 @@ def get_portfolio() -> Dict:
 
     daily_change = 0.0
     for p in positions:
-        # backend_sym = to_backend_symbol(p["symbol"])
+        backend_sym = to_backend_symbol(p["symbol"])
         backend_sym = p.get("symbol")
         prev_close = PREVIOUS_CLOSES.get(backend_sym, p["bookPrice"])
         daily_change += (p["currentPrice"] - prev_close) * p["shares"]
@@ -179,9 +185,26 @@ async def hooked_handle_message(msg: dict):
 data_service.handle_message = hooked_handle_message
 
 
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     # Start up
+    email = os.getenv("WS_EMAIL", "")
+    password = os.getenv("WS_PASSWORD", "")
+    totp_secret = os.getenv("WS_2FA_SECRET", "")
+    ws_manager = WealthSimpleManager(email, password, totp_secret)
+    wealthsimple_portfolio = get_wealthsimple_portfolio(manager=ws_manager)
+
+    with open("SYMBOLS.yaml", "w") as file:
+        yaml.dump(
+            wealthsimple_portfolio,
+            file,
+            default_flow_style=False,
+            sort_keys=False,
+            allow_unicode=True,
+        )
+
     await fetch_previous_closes()
     asyncio.create_task(data_service.start_stream())
     yield
