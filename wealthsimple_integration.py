@@ -16,7 +16,6 @@ log = logging.getLogger(__name__)
 
 
 class WealthSimpleManager:
-    """Manages WealthSimple authentication and data extraction using ws-api (GraphQL)."""
 
     def __init__(self, email: str = "", password: str = "", totp_secret: str = ""):
         self.email = email or os.getenv("WS_EMAIL")
@@ -37,7 +36,6 @@ class WealthSimpleManager:
             raise ValueError("totp_secret not found")
 
     def get_otp_code(self) -> str:
-        """Generates the current 6-digit TOTP code."""
         if not self.totp_secret:
             raise ValueError("WS_2FA_SECRET not found in .env")
         totp = pyotp.TOTP(self.totp_secret.replace(" ", ""))
@@ -46,13 +44,12 @@ class WealthSimpleManager:
         return code
 
     def login(self):
-        """Authenticates with WealthSimple using ws-api."""
         if not self.email or not self.password:
             raise ValueError("WS_EMAIL or WS_PASSWORD not found in .env")
 
         log.info("Attempting to login to WealthSimple for %s", self.email)
         try:
-            # Generate OTP immediately
+            # generate OTP
             otp = self.get_otp_code()
             log.info("Attempting login with generated OTP...")
             try:
@@ -64,8 +61,7 @@ class WealthSimpleManager:
                 self.ws = WealthsimpleAPI(session)
                 log.info("Successfully logged in to WealthSimple.")
             except (OTPRequiredException, LoginFailedException) as e:
-                # If it still fails, it might be because WealthSimple wants a fresh login first
-                # or the OTP was rejected.
+                # if this  still fails, it might be because WealthSimple wants a fresh login first or the OTP was rejected.
                 log.warning(
                     "Login with immediate OTP failed, retrying without OTP to trigger a fresh challenge..."
                 )
@@ -85,9 +81,9 @@ class WealthSimpleManager:
             log.error("Failed to login to WealthSimple: %s", e)
             raise
 
-    def map_symbol(self, security_node: Dict) -> str:
-        """Maps WealthSimple security node to yfinance-compatible symbols."""
-        # The structure from ws-api GraphQL varies, we need to find the ticker and exchange
+    #! Deprecated
+    def map_symbol(self, security_node: Dict) -> str | None:
+        # ws-api GraphQL API
         stock = security_node.get("stock", {})
         symbol = stock.get("symbol") or security_node.get("symbol")
         exchange = (
@@ -115,8 +111,8 @@ class WealthSimpleManager:
 
         return symbol
 
+    #! Deprecated
     def get_aggregated_portfolio(self) -> Dict[str, Dict]:
-        """Fetches and aggregates all stocks, ETFs, and crypto from all accounts."""
         if not self.ws:
             self.login()
 
@@ -128,7 +124,7 @@ class WealthSimpleManager:
             log.error("Failed to fetch positions: %s", e)
             return {}
 
-        # Dictionary to store aggregated data: {symbol: {'shares': float, 'total_book_value': float}}
+        #  {symbol: {'shares': float, 'total_book_value': float}}
         aggregated = {}
 
         for edge in positions_edges:
@@ -172,24 +168,22 @@ class WealthSimpleManager:
 
 
 def get_wealthsimple_portfolio(manager: WealthSimpleManager) -> Dict[str, Dict]:
-    """Helper function to be called from main.py."""
-
     manager.login()
-    # return
-
     all_account_info = manager.ws.get_accounts(open_only=True)
+    # SKIP managed accounts as we cant sell or update security
     self_traded_account_ids = [
         acc["id"]
         for acc in all_account_info
         if "SELF_DIRECTED" in acc["unifiedAccountType"]
     ]
-
+    # EX unique_security_book_price = {"NVDA": {"shares" : 12.1, "book_value":1234.0}}
     unique_security_book_price = defaultdict(lambda: {"shares": 0.0, "book_value": 0.0})
 
     for account_id in self_traded_account_ids:
         securities_info = manager.ws.get_account_balances(account_id)
         for security_id, _ in securities_info.items():
-            if security_id not in ["sec-c-cad", "sec-c-usd"]:  # remove currency
+            # remove currency
+            if security_id not in ["sec-c-cad", "sec-c-usd"]:
                 security_id = security_id.replace("[", "").replace("]", "")
 
                 get_all_info_on_security = manager.ws.get_identity_positions(
@@ -203,12 +197,8 @@ def get_wealthsimple_portfolio(manager: WealthSimpleManager) -> Dict[str, Dict]:
                         "CRYPTOCURRENCY",
                         "EXCHANGE_TRADED_FUND",
                     ]:
-                        # Skip anything but stocks and actual securities
+                        # Skip anything but  actual securities - skips MONEY and precious metal
                         continue
-
-                        # print(
-                        #     f"id: {data.get("security").get("id")}, data: \n{data.get("security")}"
-                        # )
 
                     security_name = (
                         data.get("security").get("stock").get("symbol", security_id)
@@ -237,6 +227,7 @@ yaml.add_representer(defaultdict, Representer.represent_dict)
 yaml.representer.SafeRepresenter.add_representer(
     defaultdict, SafeRepresenter.represent_dict
 )
+# Test
 if __name__ == "__main__":
     # Test script
     logging.basicConfig(level=logging.INFO)

@@ -9,6 +9,7 @@ import pandas as pd
 
 import yfinance as yf
 from yfinance import AsyncWebSocket, download, Ticker
+from wealthsimple_integration import get_wealthsimple_portfolio
 
 
 logging.basicConfig(
@@ -18,22 +19,21 @@ log = logging.getLogger(__name__)
 
 
 def format_ohlcv(hist_df):
-    """Convert a yfinance history DataFrame to lightweight-charts format.
+    # open,high,low, close, volume - ohlcv
+    # Convert a yfinance history DataFrame to lightweight-charts format.
 
-    Input:  DataFrame with DatetimeTZ index ('Datetime'/'Date') and
-            capitalized columns (Open, High, Low, Close, Volume).
-            Use yfinance `Ticker.history()` — NOT `yfinance.download()`.
-            download() returns a multi-level column index incompatible with
-            this function's column-rename logic.
-    Output: DataFrame with columns [time, open, high, low, close, volume]
-            where `time` is a Unix integer (seconds, UTC).
-    """
+    # Input:  DataFrame with DatetimeTZ index ('Datetime'/'Date') and
+    #         capitalized columns (Open, High, Low, Close, Volume).
+    #         Use yfinance `Ticker.history()` — NOT `yfinance.download()`.
+    #         download() returns a multi-level column index incompatible with
+    #         this function's column-rename logic.
+    # Output: DataFrame with columns [time, open, high, low, close, volume]
+    #         where `time` is a Unix integer (seconds, UTC).
+
     df = hist_df.copy()
 
-    # Flatten the DatetimeTZ index into a plain column
     df = df.reset_index()
 
-    # Rename index column ('Datetime' for intraday, 'Date' for daily)
     time_col = "Datetime" if "Datetime" in df.columns else "Date"
     df = df.rename(
         columns={
@@ -55,13 +55,34 @@ def format_ohlcv(hist_df):
 
 
 def read_symbol_yaml():
-    with open("./SYMBOLS.yaml", "r") as f:
-        return yaml.safe_load(f)
+    try:
+        with open("./SYMBOLS.yaml", "r") as f:
+            return yaml.safe_load(f)
+    except Exception as e:
+        log.warning(f"Could not read SYMBOLS.yaml: {e}")
+        return {}
 
 
-SYMBOLS = read_symbol_yaml()
+def load_portfolio():
+    #  load portfolio from WealthSimple
+    try:
+        log.info("Attempting to load portfolio from WealthSimple...")
+        ws_portfolio = get_wealthsimple_portfolio()
+        if ws_portfolio:
+            log.info(
+                f"Successfully loaded portfolio from WealthSimple with {len(ws_portfolio)} symbols.",
+            )
+            return ws_portfolio
+    except Exception as e:
+        log.error(f"Failed to load portfolio from WealthSimple: {e}")
+
+    log.info("Falling back to local SYMBOLS.yaml")
+    return read_symbol_yaml()
 
 
+SYMBOLS = load_portfolio()
+
+#! TEST
 # SYMBOLS = {
 #     "BTC-CAD": {"book_value": 129328.97, "shares": 0.011184},
 #     "NFLX": {"book_value": 104.76, "shares": 40.0},
@@ -74,7 +95,7 @@ SYMBOLS = read_symbol_yaml()
 #  DATA SERVICE
 # ══════════════════════════════════════════════
 class DataService:
-    """Handles all data fetching: preload, websocket streaming, and retries."""
+    # handles all data fetching: preload, websocket streaming, and retries
 
     def __init__(self, symbols):
         self.symbols = symbols
@@ -82,10 +103,10 @@ class DataService:
         self.previous_prices = {}
 
     def preload_prices(self):
-        """Fetch initial 1-day/1-min OHLCV data for all symbols."""
+        # Fetch initial 1-day/1-min OHLCV data for all symbols.
 
         symbols = list(self.symbols.keys())
-        log.debug("Preloading initial data for %s", symbols)
+        log.debug(f"Preloading initial data for {symbols}")
         tickers = download(
             symbols, period="1d", interval="1m", progress=False, threads=True
         )
@@ -105,13 +126,15 @@ class DataService:
                 self.previous_prices[sym] = price
 
             except Exception as e:
-                log.warning("Preload failed for %s: %s", sym, e)
+                log.warning(
+                    f"Preload failed for {sym}: {e}",
+                )
                 self.latest_data[sym] = {"price": "N/A", "volume": "N/A"}
                 self.previous_prices[sym] = None
         return self.latest_data, self.previous_prices
 
     async def handle_message(self, msg: dict):
-        """Async callback for each websocket tick. Updates previous_prices and latest_data."""
+        # websocker: updates previous_prices and latest_data
         symbol = msg.get("id", None)
         price = msg.get("price", 0)
         volume = msg.get("dayVolume", 0)
@@ -123,7 +146,7 @@ class DataService:
     async def retry_missing_prices(
         self, symbols: list, retries: int = 5, delay: float = 5.0
     ):
-        """Background task: retry fetching prices for symbols that failed preload."""
+        #  retry fetching prices for symbols that failed preload! IMPORTANT
         loop = asyncio.get_running_loop()
         pending = list(symbols)
 
@@ -147,11 +170,9 @@ class DataService:
                         "volume": self.latest_data[sym].get("volume", "N/A"),
                     }
                     self.previous_prices[sym] = price
-                    log.debug("Retry succeeded for %s: %s", sym, price)
+                    log.debug(f"Retry succeeded for {sym}: {price}")
                 except Exception as e:
-                    log.warning(
-                        "Retry %d/%d failed for %s: %s", attempt + 1, retries, sym, e
-                    )
+                    log.warning(f"Retry {attempt+1}/{retries}failed for {sym}: {e}")
                     still_missing.append(sym)
 
             pending = still_missing
@@ -160,7 +181,7 @@ class DataService:
             await asyncio.sleep(delay)
 
     async def start_stream(self):
-        """Main async entry point: preload data, open websocket, start listening."""
+        # entry point for websocker: preload data, open websocket, start listening
         self.preload_prices()
 
         async with AsyncWebSocket(verbose=False) as ws:
